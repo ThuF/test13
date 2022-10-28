@@ -1,0 +1,66 @@
+name: Build Application Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      xskRepository:
+        description: XSK Repository
+        required: true
+        type: choice
+        options: 
+        - 'dirigiblelabs/xsk-kyma'
+        - 'dirigiblelabs/xsk-kyma-runtime-distro' 
+        - 'dirigiblelabs/xsk-cf'
+        - 'dirigiblelabs/xsk'
+      xskVersion:
+        description: XSK Version
+        required: true
+        default: 'latest'
+      applicationRepository:
+        description: Application Repository
+        required: true
+        default: '<your-organization>/<your-repository>'
+      applicationReleaseVersion:
+        description: Application Release Version
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      publishPackageInRepository: false
+    steps:
+      - name: Release Input Parameters
+        run: |
+          echo "Release Type: ${{ github.event.inputs.releaseType }}"
+          echo "Application Repository: ${{ github.event.inputs.applicationRepository }}"
+          echo "Application Release Version: ${{ github.event.inputs.applicationReleaseVersion }}"
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: Build Dockerfile
+        run: |
+          $publishPackageInRepository == 'true' &&
+          LABEL='LABEL org.opencontainers.image.source https://github.com/${{ github.event.inputs.applicationRepository }}' ||
+          LABEL=''
+
+          PUBLIC='/usr/local/tomcat/target/dirigible/repository/root/registry/public'
+
+          DOCKERFILE_CONTENT=$(cat << EOF
+          FROM scratch as build
+          COPY . "$PUBLIC/"
+          FROM ${{ github.event.inputs.xskRepository }}:${{ github.event.inputs.xskVersion }}
+          COPY --from=build --chown=nonroot:nonroot "$PUBLIC/" "$PUBLIC/"
+          $LABEL
+          EOF
+          )
+          echo "$DOCKERFILE_CONTENT" >> Dockerfile
+          echo "$DOCKERFILE_CONTENT"
+      - name: Docker Login
+        run: docker login ${{secrets.DOCKER_REGISTRY}} -u ${{secrets.DOCKER_USERNAME}} -p ${{secrets.DOCKER_PASSWORD}}
+      - name: Build Application Image
+        run: |
+          docker build . -t ${{secrets.DOCKER_REGISTRY}}/${{ github.event.inputs.applicationRepository }}:${{ github.event.inputs.applicationReleaseVersion }}
+          docker tag ${{secrets.DOCKER_REGISTRY}}/${{ github.event.inputs.applicationRepository }}:${{ github.event.inputs.applicationReleaseVersion }} ${{secrets.DOCKER_REGISTRY}}/${{ github.event.inputs.applicationRepository }}:latest
+          docker push ${{secrets.DOCKER_REGISTRY}}/${{ github.event.inputs.applicationRepository }}:${{ github.event.inputs.applicationReleaseVersion }}
+          docker push ${{secrets.DOCKER_REGISTRY}}/${{ github.event.inputs.applicationRepository }}:latest
